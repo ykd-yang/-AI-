@@ -11,6 +11,7 @@ DECLARE_LOG_CATEGORY_EXTERN(LogDialogueNPC, Log, All);
 class FTextToSpeechBase;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnNPCReply, const FString&, Text);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnVoicePlaybackFinished, const FString&, Line);
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class NEWIDOLPROJECT_API UDialogueNpcComponent : public UActorComponent
@@ -23,6 +24,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category="NPC")
 	FOnNPCReply OnNPCReply;
+
+	UPROPERTY(BlueprintAssignable, Category="NPC|Voice")
+	FOnVoicePlaybackFinished OnVoicePlaybackFinished;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="NPC")
 	bool bAutoSendOnBeginPlay = false;
@@ -57,14 +61,36 @@ public:
 	UFUNCTION(BlueprintCallable, Category="NPC|Voice")
 	void SpeakLine(const FString& Line);
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="NPC")
+	FString LatestPrompt;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="NPC")
+	FString LatestReply;
+
+	UFUNCTION(BlueprintPure, Category="NPC")
+	FString GetLatestPrompt() const;
+
+	UFUNCTION(BlueprintPure, Category="NPC")
+	FString GetLatestReply() const;
+
+	UFUNCTION(BlueprintImplementableEvent, Category="NPC|Voice")
+	void OnVoicePlaybackFinishedBP(const FString& Line);
+
+
 protected:
 	virtual void BeginPlay() override;
 
 private:
 	void EnsureTextToSpeechInitialized();
 	void ScheduleSpeak(const FString& Line, float DelaySeconds);
+	void StartMonitoringVoicePlayback();
+	void StopMonitoringVoicePlayback(bool bBroadcastResult);
+	void CheckVoicePlaybackFinished();
+	void BroadcastVoicePlaybackFinished();
 
 	void OnHttpCompleted(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully);
 
 	TSharedPtr<FTextToSpeechBase> TextToSpeech;
+	FTimerHandle VoiceMonitorTimerHandle;
+	FString PendingVoiceLine;
 };

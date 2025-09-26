@@ -278,6 +278,230 @@ void UDialogueNpcComponent::EnsureTextToSpeechInitialized()
 
 
 
+void UDialogueNpcComponent::StartMonitoringVoicePlayback()
+
+
+
+{
+
+
+
+    UWorld* World = GetWorld();
+
+
+
+    if (!World)
+
+
+
+    {
+
+
+
+        return;
+
+
+
+    }
+
+
+
+
+
+
+
+    FTimerManager& TimerManager = World->GetTimerManager();
+
+
+
+    if (TimerManager.IsTimerActive(VoiceMonitorTimerHandle))
+
+
+
+    {
+
+
+
+        TimerManager.ClearTimer(VoiceMonitorTimerHandle);
+
+
+
+    }
+
+
+
+
+
+
+
+    TimerManager.SetTimer(VoiceMonitorTimerHandle, this, &UDialogueNpcComponent::CheckVoicePlaybackFinished, 0.1f, true);
+
+
+
+}
+
+
+
+
+
+
+
+void UDialogueNpcComponent::StopMonitoringVoicePlayback(bool bBroadcastResult)
+
+
+
+{
+
+
+
+    if (UWorld* World = GetWorld())
+
+
+
+    {
+
+
+
+        World->GetTimerManager().ClearTimer(VoiceMonitorTimerHandle);
+
+
+
+    }
+
+
+
+
+
+
+
+    if (bBroadcastResult)
+
+
+
+    {
+
+
+
+        BroadcastVoicePlaybackFinished();
+
+
+
+    }
+
+
+
+    else
+
+
+
+    {
+
+
+
+        PendingVoiceLine.Empty();
+
+
+
+    }
+
+
+
+}
+
+
+
+
+
+
+
+void UDialogueNpcComponent::CheckVoicePlaybackFinished()
+
+
+
+{
+
+
+
+    if (!TextToSpeech.IsValid() || !TextToSpeech->IsSpeaking())
+
+
+
+    {
+
+
+
+        StopMonitoringVoicePlayback(true);
+
+
+
+    }
+
+
+
+}
+
+
+
+
+
+
+
+void UDialogueNpcComponent::BroadcastVoicePlaybackFinished()
+
+
+
+{
+
+
+
+    if (PendingVoiceLine.IsEmpty())
+
+
+
+    {
+
+
+
+        return;
+
+
+
+    }
+
+
+
+
+
+
+
+    const FString CompletedLine = PendingVoiceLine;
+
+
+
+    PendingVoiceLine.Empty();
+
+
+
+
+
+
+
+    OnVoicePlaybackFinished.Broadcast(CompletedLine);
+
+
+
+    OnVoicePlaybackFinishedBP(CompletedLine);
+
+
+
+}
+
+
+
+
+
+
+
 void UDialogueNpcComponent::ScheduleSpeak(const FString& Line, float DelaySeconds)
 
 
@@ -434,6 +658,46 @@ void UDialogueNpcComponent::SendDefaultPrompt()
 
 
 
+FString UDialogueNpcComponent::GetLatestPrompt() const
+
+
+
+{
+
+
+
+    return LatestPrompt;
+
+
+
+}
+
+
+
+
+
+
+
+FString UDialogueNpcComponent::GetLatestReply() const
+
+
+
+{
+
+
+
+    return LatestReply;
+
+
+
+}
+
+
+
+
+
+
+
 void UDialogueNpcComponent::SpeakLine(const FString& Line)
 
 
@@ -447,6 +711,10 @@ void UDialogueNpcComponent::SpeakLine(const FString& Line)
 
 
     {
+
+
+
+        StopMonitoringVoicePlayback(false);
 
 
 
@@ -478,6 +746,10 @@ void UDialogueNpcComponent::SpeakLine(const FString& Line)
 
 
 
+        StopMonitoringVoicePlayback(false);
+
+
+
         return;
 
 
@@ -506,6 +778,10 @@ void UDialogueNpcComponent::SpeakLine(const FString& Line)
 
 
 
+        StopMonitoringVoicePlayback(false);
+
+
+
         TextToSpeech->StopSpeaking();
 
 
@@ -522,7 +798,15 @@ void UDialogueNpcComponent::SpeakLine(const FString& Line)
 
 
 
+    PendingVoiceLine = Line;
+
+
+
     TextToSpeech->Speak(Line);
+
+
+
+    StartMonitoringVoicePlayback();
 
 
 
@@ -558,6 +842,26 @@ void UDialogueNpcComponent::StopVoicePlayback()
 
 
 
+        StopMonitoringVoicePlayback(true);
+
+
+
+    }
+
+
+
+    else
+
+
+
+    {
+
+
+
+        StopMonitoringVoicePlayback(false);
+
+
+
     }
 
 
@@ -587,6 +891,10 @@ void UDialogueNpcComponent::SendPrompt(const FString& UserText)
 
 
     MessageObject->SetStringField(TEXT("text"), UserText);
+
+
+
+    LatestPrompt = UserText;
 
 
 
@@ -832,7 +1140,7 @@ void UDialogueNpcComponent::OnHttpCompleted(FHttpRequestPtr Request, FHttpRespon
 
             UE_LOG(LogDialogueNPC, Log, TEXT("Received reply: %s"), *Reply);
 
-
+            LatestReply = Reply;
 
             OnNPCReply.Broadcast(Reply);
 
