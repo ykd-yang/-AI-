@@ -8,6 +8,7 @@ import requests
 import json
 import time
 import sys
+import random
 from pathlib import Path
 
 
@@ -61,7 +62,8 @@ def test_with_response_json(host="127.0.0.1", port=4000):
     
     if not json_file.exists():
         print(f"[Test] ❌ response.json 파일을 찾을 수 없습니다")
-        return False
+        print(f"[Test] 랜덤 데이터로 테스트를 진행합니다...")
+        return test_with_random_data(host, port)
     
     print(f"[Test] response.json 파일을 사용한 테스트 시작")
     
@@ -84,9 +86,68 @@ def test_with_response_json(host="127.0.0.1", port=4000):
         )
         
         if response.status_code == 200:
+            points_count = len(data.get('last_status', {}).get('points', []))
             print(f"[Test] ✅ response.json 전송 성공!")
-            print(f"[Test] 포인트 개수: {len(data.get('points', []))}")
-            print(f"[Test] 신뢰도: {data.get('confidence', 'N/A')}")
+            print(f"[Test] 포인트 개수: {points_count}")
+            print(f"[Test] 총 점수: {data.get('total_score', 'N/A')}")
+            return True
+        else:
+            print(f"[Test] ❌ 전송 실패 (Status: {response.status_code})")
+            return False
+            
+    except Exception as e:
+        print(f"[Test] ❌ 오류: {e}")
+        return False
+
+
+def test_with_random_data(host="127.0.0.1", port=4000):
+    """랜덤 데이터를 사용한 테스트"""
+    print(f"[Test] 랜덤 데이터를 사용한 테스트 시작")
+    
+    try:
+        # 랜덤 포즈 데이터 생성
+        pose_names = ["pelvis", "spine_02", "neck_01", "head", "clavicle_l", "upperarm_l"]
+        points = []
+        
+        for i, name in enumerate(pose_names):
+            point = {
+                "id": i,
+                "name": name,
+                "x": round(random.uniform(-2.0, 2.0), 3),
+                "y": round(random.uniform(-2.0, 2.0), 3),
+                "z": round(random.uniform(-2.0, 2.0), 3),
+                "rotation": round(random.uniform(-180, 180), 1)
+            }
+            points.append(point)
+        
+        data = {
+            "message": "랜덤 테스트 데이터",
+            "total_score": round(random.uniform(0.0, 1.0), 2),
+            "last_status": {
+                "frame": random.randint(1, 100),
+                "points": points
+            },
+            "part_score": [
+                [round(random.uniform(0.0, 1.0), 1) for _ in range(4)]
+            ],
+            "timestamp": time.time(),
+            "client_id": "test_random_client",
+            "test_mode": True
+        }
+        
+        url = f"http://{host}:{port}/pose_data"
+        
+        response = requests.post(
+            url,
+            json=data,
+            timeout=10,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        if response.status_code == 200:
+            print(f"[Test] ✅ 랜덤 데이터 전송 성공!")
+            print(f"[Test] 포인트 개수: {len(points)}")
+            print(f"[Test] 총 점수: {data['total_score']}")
             return True
         else:
             print(f"[Test] ❌ 전송 실패 (Status: {response.status_code})")
