@@ -5,10 +5,12 @@
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
+#include "Internationalization/UTF8ToTCHAR.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "Containers/StringConv.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHttpClientModule, Log, All);
 

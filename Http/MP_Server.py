@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import json
 import socket
 import threading
@@ -12,69 +12,9 @@ import mediapipe as mp
 from mediapipe.framework.formats import landmark_pb2
 import numpy as np
 
-mp_pose = mp.solutions.pose
-
-MANNY17_NAMES: Tuple[str, ...] = (
-    "pelvis",
-    "spine_02",
-    "neck_01",
-    "head",
-    "clavicle_l",
-    "upperarm_l",
-    "lowerarm_l",
-    "hand_l",
-    "clavicle_r",
-    "upperarm_r",
-    "lowerarm_r",
-    "hand_r",
-    "thigh_l",
-    "calf_l",
-    "foot_l",
-    "thigh_r",
-    "calf_r",
-    "foot_r",
-)
-
-MANNY17_INDICES: Tuple[Tuple[int, int], ...] = (
-    (mp_pose.PoseLandmark.LEFT_HIP.value, mp_pose.PoseLandmark.RIGHT_HIP.value),
-    (mp_pose.PoseLandmark.LEFT_SHOULDER.value, mp_pose.PoseLandmark.RIGHT_SHOULDER.value),
-    (mp_pose.PoseLandmark.NOSE.value, -1),
-    (mp_pose.PoseLandmark.NOSE.value, -1),
-    (mp_pose.PoseLandmark.LEFT_SHOULDER.value, -1),
-    (mp_pose.PoseLandmark.LEFT_ELBOW.value, -1),
-    (mp_pose.PoseLandmark.LEFT_WRIST.value, -1),
-    (mp_pose.PoseLandmark.LEFT_INDEX.value, -1),
-    (mp_pose.PoseLandmark.RIGHT_SHOULDER.value, -1),
-    (mp_pose.PoseLandmark.RIGHT_ELBOW.value, -1),
-    (mp_pose.PoseLandmark.RIGHT_WRIST.value, -1),
-    (mp_pose.PoseLandmark.RIGHT_INDEX.value, -1),
-    (mp_pose.PoseLandmark.LEFT_HIP.value, -1),
-    (mp_pose.PoseLandmark.LEFT_KNEE.value, -1),
-    (mp_pose.PoseLandmark.LEFT_ANKLE.value, -1),
-    (mp_pose.PoseLandmark.RIGHT_HIP.value, -1),
-    (mp_pose.PoseLandmark.RIGHT_KNEE.value, -1),
-    (mp_pose.PoseLandmark.RIGHT_ANKLE.value, -1),
-)
-
-MANNY17_CONNECTIONS: Tuple[Tuple[int, int], ...] = (
-    (0, 1),
-    (1, 2),
-    (2, 3),
-    (2, 4),
-    (4, 5),
-    (5, 6),
-    (6, 7),
-    (2, 8),
-    (8, 9),
-    (9, 10),
-    (10, 11),
-    (0, 12),
-    (12, 13),
-    (13, 14),
-    (0, 15),
-    (15, 16),
-    (16, 17),
-)
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
 
 VIDEO_EXTENSIONS: Tuple[str, ...] = (".mp4", ".mov", ".avi", ".mkv", ".gif")
 
@@ -99,9 +39,9 @@ class LandmarkBroadcaster:
         server_socket.bind((self._host, self._port))
         server_socket.listen()
         self._server_socket = server_socket
-        self._accept_thread = threading.Thread(target=self._accept_loop, name="PoseServerAccept", daemon=True)
+        self._accept_thread = threading.Thread(target=self._accept_loop, name="HandServerAccept", daemon=True)
         self._accept_thread.start()
-        print(f"[PoseServer] Listening on {self._host}:{self._port}")
+        print(f"[HandServer] Listening on {self._host}:{self._port}")
 
     def _accept_loop(self) -> None:
         assert self._server_socket is not None
@@ -113,7 +53,7 @@ class LandmarkBroadcaster:
                 continue
             except OSError:
                 break
-            print(f"[PoseServer] Client connected: {addr}")
+            print(f"[HandServer] Client connected: {addr}")
             conn.setblocking(True)
             with self._clients_lock:
                 self._clients.append(conn)
@@ -133,7 +73,7 @@ class LandmarkBroadcaster:
                     peer = dead.getpeername()
                 except OSError:
                     peer = "unknown"
-                print(f"[PoseServer] Client disconnected: {peer}")
+                print(f"[HandServer] Client disconnected: {peer}")
                 self._clients.remove(dead)
                 with closing(dead):
                     pass
@@ -156,59 +96,32 @@ class LandmarkBroadcaster:
             self._clients.clear()
 
 
-def _landmark_to_point(lm: landmark_pb2.NormalizedLandmark) -> Tuple[float, float, float, float]:
-    return (lm.x, lm.y, lm.z, getattr(lm, "visibility", 0.0))
+def compute_hand_payload(multi_hand_landmarks, multi_handedness) -> Dict[str, object]:
+    hands_payload = []
+    for i, (landmarks, handedness) in enumerate(zip(multi_hand_landmarks, multi_handedness)):
+        hand_payload = {
+            "hand_index": i,
+            "thumb_x": [landmarks.landmark[i].x for i in range(mp_hands.HandLandmark.THUMB_CMC, mp_hands.HandLandmark.THUMB_TIP + 1)],
+            "index_x": [landmarks.landmark[i].x for i in range(mp_hands.HandLandmark.INDEX_FINGER_MCP, mp_hands.HandLandmark.INDEX_FINGER_TIP + 1)],
+        }
+        hands_payload.append(hand_payload)
+
+    return {
+        "timestamp": time.time(),
+        "hands": hands_payload,
+    }
 
 
-def _average_pair(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
-    return (
-        (a[0] + b[0]) * 0.5,
-        (a[1] + b[1]) * 0.5,
-        (a[2] + b[2]) * 0.5,
-        (a[3] + b[3]) * 0.5,
-    )
-
-
-def compute_manny17_joints(landmarks: Sequence[landmark_pb2.NormalizedLandmark]) -> List[Dict[str, object]]:
-    if not landmarks:
-        return []
-
-    joints: List[Dict[str, object]] = []
-    for joint_id, (name, (a_idx, b_idx)) in enumerate(zip(MANNY17_NAMES, MANNY17_INDICES)):
-        base_point = _landmark_to_point(landmarks[a_idx])
-        if b_idx >= 0:
-            pair_point = _landmark_to_point(landmarks[b_idx])
-            joint_point = _average_pair(base_point, pair_point)
-        else:
-            joint_point = base_point
-        joints.append(
-            {
-                "id": joint_id,
-                "name": name,
-                "x": joint_point[0],
-                "y": joint_point[1],
-                "z": joint_point[2],
-                "visibility": joint_point[3],
-            }
-        )
-    return joints
-
-
-def draw_manny17_visualization(frame: np.ndarray, joints: Sequence[Dict[str, object]]) -> np.ndarray:
-    """Render Manny 17-joint skeleton with red joints and green bones."""
+def draw_hand_visualization(frame: np.ndarray, multi_hand_landmarks) -> np.ndarray:
     image = frame.copy()
-    h, w = image.shape[:2]
-    points: Dict[int, Tuple[int, int]] = {}
-    for joint in joints:
-        joint_id = int(joint["id"])
-        px = int(float(joint["x"]) * w)
-        py = int(float(joint["y"]) * h)
-        points[joint_id] = (px, py)
-        cv2.circle(image, (px, py), 6, (0, 0, 255), thickness=-1)
-
-    for start_id, end_id in MANNY17_CONNECTIONS:
-        if start_id in points and end_id in points:
-            cv2.line(image, points[start_id], points[end_id], (0, 255, 0), thickness=2)
+    if multi_hand_landmarks:
+        for hand_landmarks in multi_hand_landmarks:
+            mp_drawing.draw_landmarks(
+                image,
+                hand_landmarks,
+                mp_hands.HAND_CONNECTIONS,
+                mp_drawing_styles.get_default_hand_landmarks_style(),
+                mp_drawing_styles.get_default_hand_connections_style())
     return image
 
 
@@ -236,87 +149,81 @@ def _open_capture(camera_index: int, video_path: str | None) -> Tuple[cv2.VideoC
     return capture, source_desc
 
 
-def run_pose_server(host: str, port: int, visualize: bool, camera_index: int, video_path: str | None, loop_video: bool) -> None:
+def run_hand_server(host: str, port: int, visualize: bool, camera_index: int, video_path: str | None, loop_video: bool) -> None:
     broadcaster = LandmarkBroadcaster(host, port)
     broadcaster.start()
 
-    pose = mp_pose.Pose(
-        model_complexity=1,
-        smooth_landmarks=True,
-        enable_segmentation=False,
+    with mp_hands.Hands(
+        model_complexity=0,
         min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
+        min_tracking_confidence=0.5) as hands:
 
-    cap, source_desc = _open_capture(camera_index, video_path)
-    if not cap.isOpened():
-        pose.close()
-        raise RuntimeError(f"Could not open {source_desc}")
+        cap, source_desc = _open_capture(camera_index, video_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Could not open {source_desc}")
 
-    print(f"[PoseServer] Reading frames from {source_desc}")
+        print(f"[HandServer] Reading frames from {source_desc}")
 
-    try:
-        while True:
-            success, frame = cap.read()
-            if not success:
-                if video_path:
-                    if loop_video:
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        continue
-                    print("[PoseServer] Reached end of video; stopping.")
-                    break
-                print("[PoseServer] Frame capture failed; retrying...")
-                time.sleep(0.05)
-                continue
+        try:
+            while True:
+                success, frame = cap.read()
+                if not success:
+                    if video_path:
+                        if loop_video:
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                            continue
+                        print("[HandServer] Reached end of video; stopping.")
+                        break
+                    print("[HandServer] Frame capture failed; retrying...")
+                    time.sleep(0.05)
+                    continue
 
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = pose.process(rgb_frame)
+                # To improve performance, optionally mark the image as not writeable to
+                # pass by reference.
+                frame.flags.writeable = False
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = hands.process(rgb_frame)
+                frame.flags.writeable = True
 
-            vis_frame = None
-            if results.pose_landmarks:
-                joints = compute_manny17_joints(results.pose_landmarks.landmark)
-                if joints:
-                    payload = {
-                        "timestamp": time.time(),
-                        "points": joints,
-                    }
+                vis_frame = None
+                if results.multi_hand_landmarks:
+                    payload = compute_hand_payload(results.multi_hand_landmarks, results.multi_handedness)
                     broadcaster.broadcast(json.dumps(payload))
                     if visualize:
-                        vis_frame = draw_manny17_visualization(frame, joints)
+                        vis_frame = draw_hand_visualization(frame, results.multi_hand_landmarks)
 
+                if visualize:
+                    if vis_frame is None:
+                        vis_frame = frame.copy() # Show original frame if no hands
+                    cv2.imshow("MediaPipe Hands", vis_frame)
+                    if cv2.waitKey(1) & 0xFF == 27:
+                        break
+        except KeyboardInterrupt:
+            print("\n[HandServer] Interrupted by user.")
+        finally:
+            broadcaster.stop()
+            cap.release()
             if visualize:
-                if vis_frame is None:
-                    vis_frame = np.zeros_like(frame)
-                cv2.imshow("MediaPipe Pose", vis_frame)
-                if cv2.waitKey(1) & 0xFF == 27:
-                    break
-    except KeyboardInterrupt:
-        print("\n[PoseServer] Interrupted by user.")
-    finally:
-        broadcaster.stop()
-        pose.close()
-        cap.release()
-        if visualize:
-            cv2.destroyAllWindows()
+                cv2.destroyAllWindows()
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="MediaPipe pose tracking socket server (Manny 17 layout)")
+    parser = argparse.ArgumentParser(description="MediaPipe hand tracking socket server")
     parser.add_argument("--host", default="127.0.0.1", help="Host/IP to bind the TCP server")
     parser.add_argument("--port", type=int, default=4000, help="Port for the TCP server")
     parser.add_argument("--camera", type=int, default=0, help="Camera index to open when no video is provided")
     parser.add_argument("--video", "--source", dest="video", help="Path to a video/GIF file or directory (overrides camera)")
     parser.add_argument("--loop-video", action="store_true", help="Loop the provided video file when it ends")
-    parser.add_argument("--visualize", action="store_true", help="Enable OpenCV window for Manny 17 visualization")
+    parser.add_argument("--visualize", action="store_true", help="Enable OpenCV window for hand visualization")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     try:
-        run_pose_server(args.host, args.port, args.visualize, args.camera, args.video, args.loop_video)
+        run_hand_server(args.host, args.port, args.visualize, args.camera, args.video, args.loop_video)
     except FileNotFoundError as exc:
-        print(f"[PoseServer] {exc}")
+        print(f"[HandServer] {exc}")
 
 
 if __name__ == "__main__":

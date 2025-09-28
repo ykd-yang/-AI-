@@ -27,11 +27,16 @@ struct FMPFramePayload
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="MPClient", meta=(JsonKey="timestamp"))
     double Timestamp = 0.0;
 
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="MPClient", meta=(JsonKey="total_score"))
+    float TotalScore = 0.0f;
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="MPClient", meta=(JsonKey="hands"))
     TArray<FMPHandPayload> Hands;
 };
 
 DECLARE_LOG_CATEGORY_EXTERN(LogMPClient, Log, Warning);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTotalScoreUpdated, float, TotalScore);
 
 UCLASS()
 class AMPClient : public AActor
@@ -55,11 +60,45 @@ private:
     UPROPERTY(EditAnywhere, Category="MPClient")
     float ReceiveTimeoutSeconds = 5.0f;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="MPClient|Score", meta=(AllowPrivateAccess="true"))
+    TObjectPtr<AActor> ScoreDisplayActor;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="MPClient|Score", meta=(AllowPrivateAccess="true"))
+    FString ScoreTextPrefix = TEXT("");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="MPClient|Score", meta=(AllowPrivateAccess="true", ClampMin="0", ClampMax="6"))
+    int32 ScoreDecimalPlaces = 1;
+
     bool ConnectToServer();
     bool ReceivePayload(FString& OutPayload);
     bool ParsePayload(const FString& InPayload, FMPFramePayload& OutData) const;
     void LogPayload(const FMPFramePayload& Payload) const;
     void CloseSocket();
+    void HandlePayload(const FMPFramePayload& Payload);
+    void EnsureScoreActorReference();
+    void UpdateScoreDisplay(float Score);
 
     FSocket* ClientSocket;
+
+    UPROPERTY(BlueprintReadOnly, Category="MPClient|Score", meta=(AllowPrivateAccess="true"))
+    FMPFramePayload LastPayload;
+
+    UPROPERTY(BlueprintReadOnly, Category="MPClient|Score", meta=(AllowPrivateAccess="true"))
+    float LastTotalScore = 0.0f;
+
+public:
+    UPROPERTY(BlueprintAssignable, Category="MPClient|Score")
+    FOnTotalScoreUpdated OnTotalScoreUpdated;
+
+    UFUNCTION(BlueprintCallable, Category="MPClient|Score")
+    void SetScoreDisplayActor(AActor* InActor);
+
+    UFUNCTION(BlueprintCallable, Category="MPClient|Score")
+    void RefreshScoreDisplay();
+
+    UFUNCTION(BlueprintPure, Category="MPClient|Score")
+    float GetLastTotalScore() const { return LastTotalScore; }
+
+    UFUNCTION(BlueprintImplementableEvent, Category="MPClient|Score")
+    void OnTotalScoreUpdatedBP(float NewScore);
 };

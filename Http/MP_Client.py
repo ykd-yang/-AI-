@@ -8,7 +8,7 @@ BUFFER_SIZE = 65536
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MediaPipe pose tracking socket client")
     parser.add_argument("--host", default="127.0.0.1", help="Server host to connect to")
-    parser.add_argument("--port", type=int, default=5555, help="Server port to connect to")
+    parser.add_argument("--port", type=int, default=4000, help="Server port to connect to")
     parser.add_argument("--timeout", type=float, default=5.0, help="Socket timeout in seconds")
     return parser.parse_args()
 

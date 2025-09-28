@@ -5,8 +5,10 @@
 #include "HAL/PlatformTime.h"
 #include "IPAddress.h"
 #include "JsonObjectConverter.h"
+#include "Kismet/GameplayStatics.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
+#include "Components/TextRenderComponent.h"
 
 DEFINE_LOG_CATEGORY(LogMPClient);
 
@@ -19,6 +21,11 @@ AMPClient::AMPClient()
 void AMPClient::BeginPlay()
 {
     Super::BeginPlay();
+
+    LastPayload = FMPFramePayload();
+    LastTotalScore = 0.0f;
+
+    EnsureScoreActorReference();
 
     if (!ConnectToServer())
     {
@@ -41,6 +48,7 @@ void AMPClient::BeginPlay()
     }
 
     LogPayload(ParsedPayload);
+    HandlePayload(ParsedPayload);
 }
 
 void AMPClient::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -170,7 +178,7 @@ bool AMPClient::ParsePayload(const FString& InPayload, FMPFramePayload& OutData)
 
 void AMPClient::LogPayload(const FMPFramePayload& Payload) const
 {
-    UE_LOG(LogMPClient, Warning, TEXT("timestamp=%.6f hands=%d"), Payload.Timestamp, Payload.Hands.Num());
+    UE_LOG(LogMPClient, Warning, TEXT("timestamp=%.6f total_score=%.3f hands=%d"), Payload.Timestamp, Payload.TotalScore, Payload.Hands.Num());
 
     for (const FMPHandPayload& Hand : Payload.Hands)
     {
@@ -203,4 +211,83 @@ void AMPClient::CloseSocket()
     }
 
     ClientSocket = nullptr;
+}
+
+void AMPClient::HandlePayload(const FMPFramePayload& Payload)
+{
+    LastPayload = Payload;
+    LastTotalScore = Payload.TotalScore;
+
+    UpdateScoreDisplay(LastTotalScore);
+
+    OnTotalScoreUpdated.Broadcast(LastTotalScore);
+    OnTotalScoreUpdatedBP(LastTotalScore);
+}
+
+void AMPClient::EnsureScoreActorReference()
+{
+    if (ScoreDisplayActor && IsValid(ScoreDisplayActor))
+    {
+        return;
+    }
+
+    ScoreDisplayActor = nullptr;
+
+    if (!GetWorld())
+    {
+        return;
+    }
+
+    TArray<AActor*> CandidateActors;
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), CandidateActors);
+
+    for (AActor* Actor : CandidateActors)
+    {
+        if (!IsValid(Actor))
+        {
+            continue;
+        }
+
+        const FString ClassName = Actor->GetClass()->GetName();
+        if (ClassName.Contains(TEXT("BP_Score_C")))
+        {
+            ScoreDisplayActor = Actor;
+            break;
+        }
+    }
+}
+
+void AMPClient::UpdateScoreDisplay(float Score)
+{
+    EnsureScoreActorReference();
+
+    if (!ScoreDisplayActor || !IsValid(ScoreDisplayActor))
+    {
+        UE_LOG(LogMPClient, Verbose, TEXT("ScoreDisplayActor not assigned; skipping score update."));
+        return;
+    }
+
+    UTextRenderComponent* TextComponent = ScoreDisplayActor->FindComponentByClass<UTextRenderComponent>();
+    if (!TextComponent)
+    {
+        UE_LOG(LogMPClient, Warning, TEXT("Score actor %s has no TextRenderComponent."), *ScoreDisplayActor->GetName());
+        return;
+    }
+
+    const int32 Precision = FMath::Clamp(ScoreDecimalPlaces, 0, 6);
+    const FString FormattedScore = FString::Printf(TEXT("%.*f"), Precision, Score);
+    const FString DisplayString = ScoreTextPrefix.IsEmpty() ? FormattedScore : (ScoreTextPrefix + FormattedScore);
+
+    TextComponent->SetText(FText::FromString(DisplayString));
+}
+
+void AMPClient::SetScoreDisplayActor(AActor* InActor)
+{
+    ScoreDisplayActor = InActor;
+    RefreshScoreDisplay();
+}
+
+void AMPClient::RefreshScoreDisplay()
+{
+    UpdateScoreDisplay(LastTotalScore);
 }
