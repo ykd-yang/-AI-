@@ -8,8 +8,10 @@ public class NewIdolProject : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput","HTTP", "Json", "JsonUtilities", "UMG"});
-
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", 
+			"Engine", "InputCore", "EnhancedInput","HTTP", "Json", "JsonUtilities", "UMG", "Networking",
+			"Sockets"});
+		
 		PrivateDependencyModuleNames.AddRange(new string[] { "TextToSpeech" });
 
 		// Uncomment if you are using Slate UI

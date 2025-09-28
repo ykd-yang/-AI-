@@ -37,7 +37,7 @@ protected:
     virtual void BeginPlay() override;
 
     UPROPERTY(EditAnywhere, Category="HTTP")
-    FString EndpointUrl = TEXT("http://127.0.0.1:4000/user");
+    FString EndpointUrl = TEXT("http://127.0.0.1:8000/user");
 
     UPROPERTY(EditAnywhere, Category="HTTP")
     FString RequestName = TEXT("\uC784\uAEBD\uC815");
